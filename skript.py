@@ -1,7 +1,8 @@
-from os import name
+from math import dist
 import numpy as np
-from numpy import ndim, pi, zeros_like
+from numpy import pi, zeros_like
 import matplotlib.pyplot as plt
+import itertools
 
 
 class Line:
@@ -16,6 +17,13 @@ class Line:
     def project_to_line_coord(self, points):
         return self.R @ (points - self.P)
 
+    def project_from_line_coord(self, points):
+        return (self.R.T @ points) + self.P
+
+    def distance_to_point(self, point):
+        distance = np.cross((point - self.P).T, self.v.T)[0]
+        return np.abs(distance)
+
 
 class Polygon:
     def __init__(self, n=5, radius=10, center=(0, 0), orientation=0):
@@ -24,6 +32,14 @@ class Polygon:
             [np.cos(phi), np.sin(phi)]
         )
         self.line_indices = np.array([[i, i + 1] for i in range(n - 1)] + [[n - 1, 0]])
+
+        self.center = np.array(center, ndmin=2).T
+        self.bounding_radius = radius
+
+    def is_hit_by_line(self, line):
+        distance = line.distance_to_point(self.center)
+        is_hit = distance <= self.bounding_radius
+        return is_hit
 
     def line_segments(self):
         ind_flat = self.line_indices.flatten()
@@ -47,42 +63,83 @@ def plot_poly(ax, poly, *args, **kwargs):
 def plot_line(ax, line, length):
     p = line.P
     q = line.P + length * line.v
-    ax.plot(p[0], p[1], "*")
-    ax.plot([p[0], q[0]], [p[1], q[1]])
+    (l,) = ax.plot(p[0], p[1], "*", markersize=10)
+    ax.plot([p[0], q[0]], [p[1], q[1]], color=l.get_color())
 
 
 if __name__ == "__main__":
-    poly1 = Polygon(5, radius=15, center=(10, -10), orientation=np.pi / 12)
-    poly2 = Polygon(6, radius=10, center=(20, -5), orientation=-np.pi / 12)
 
-    line = Line(-5, -35, 0.5, 1)
-    linerot = Line(0, 0, 0, 1)
+    def rand(dist=1.0):
+        ret = 2 * dist * (np.random.rand() - 0.5)
+        # print(f"r = {ret}")
+        return ret
+
+    FIELDSIZE = 50
+    colors = itertools.cycle(plt.rcParams["axes.prop_cycle"].by_key()["color"])
     fig = plt.figure(num=1)
     ax1 = fig.add_subplot(1, 2, 1)
     ax2 = fig.add_subplot(1, 2, 2)
 
-    p1r = poly1.transformed(line)  # line.transform_to_view(poly1.points)
-    p2r = poly2.transformed(line)  # line.transform_to_view(poly2.points)
-    plot_poly(ax1, poly1, "ro:")
-    plot_poly(ax1, poly2, "bo-.")
-    plot_line(ax1, line, 50)
-    plot_poly(ax2, p1r, "ro:")
-    plot_poly(ax2, p2r, "bo-.")
-    plot_line(ax2, linerot, 50)
+    # line = Line(-5, -35, 0.1, 1)
+    line = Line(rand(FIELDSIZE / 3), rand(FIELDSIZE / 3), rand(), rand())
+    linerot = Line(0, 0, 0, 1)
+    plot_line(ax1, line, FIELDSIZE)
+    plot_line(ax2, linerot, FIELDSIZE)
 
-    x_of_lines, y_of_lines = p1r.line_segments()
-    hit_indices = np.logical_xor(x_of_lines[0] < 0, x_of_lines[1] < 0)
-    x_of_hit_lines = x_of_lines[:, hit_indices]
-    y_of_hit_lines = y_of_lines[:, hit_indices]
+    polys = [
+        Polygon(
+            np.random.randint(3, 10),
+            radius=np.random.rand() * 10,
+            center=(rand(FIELDSIZE), rand(FIELDSIZE)),
+            orientation=rand(pi),
+        )
+        for i in range(100)
+        # Polygon(5, radius=5, center=(14, -10), orientation=np.pi / 12),
+        # Polygon(6, radius=4, center=(-5, -5), orientation=-np.pi / 12),
+        # Polygon(6, radius=5, center=(25, -25), orientation=-np.pi / 12),
+        # Polygon(6, radius=7, center=(-5, -15), orientation=-np.pi / 12),
+        # Polygon(6, radius=3, center=(5, -30), orientation=-np.pi / 12),
+    ]
+    distance = np.inf
+    for i, poly in enumerate(polys):
+        if poly.is_hit_by_line(line):
+            color = next(colors)
+            poly_rot = poly.transformed(line)  # line.transform_to_view(poly1.points)
+            plot_poly(ax1, poly, ":", color=color)
+            plot_poly(ax2, poly_rot, ":", color=color)
 
-    y_hit = (
-        y_of_hit_lines[0] * x_of_hit_lines[1] - y_of_hit_lines[1] * x_of_hit_lines[0]
-    ) / (x_of_hit_lines[1] - x_of_hit_lines[0])
-    x_hit = zeros_like(y_hit)
+            x_of_lines, y_of_lines = poly_rot.line_segments()
+            hit_indices = np.logical_xor(x_of_lines[0] < 0, x_of_lines[1] < 0)
+            x_of_hit_lines = x_of_lines[:, hit_indices]
+            y_of_hit_lines = y_of_lines[:, hit_indices]
 
-    ax2.plot(x_hit, y_hit, "o")
+            y_hit = (
+                y_of_hit_lines[0] * x_of_hit_lines[1]
+                - y_of_hit_lines[1] * x_of_hit_lines[0]
+            ) / (x_of_hit_lines[1] - x_of_hit_lines[0])
+            x_hit = zeros_like(y_hit)
+            ax2.plot(x_hit, y_hit, "ko", markersize=3)
+            pos_dist = y_hit[y_hit > 0]
+            if len(pos_dist):
+                _distance = np.min(pos_dist)
+                print(_distance)
+                if _distance < distance:
+                    distance = _distance
+        else:
+            poly_rot = poly.transformed(line)  # line.transform_to_view(poly1.points)
+            plot_poly(ax1, poly, ":", color=(0.8, 0.8, 0.8))
+            plot_poly(ax2, poly_rot, ":", color=(0.8, 0.8, 0.8))
+    if distance < np.inf:
+        print(f"distance = {distance}")
+        ax2.plot(0, distance, "ko", markersize=12)
+        p = line.project_from_line_coord(np.array([[0], [distance]]))
+        ax1.plot(p[0], p[1], "ko", markersize=12)
+    else:
+        print("No hit")
 
     for ax in (ax1, ax2):
+        ax.set_xlim((-FIELDSIZE - 10, FIELDSIZE + 10))
+        ax.set_ylim((-FIELDSIZE - 10, FIELDSIZE + 10))
         ax.set_aspect("equal")
         ax.grid(True)
     fig.tight_layout()
